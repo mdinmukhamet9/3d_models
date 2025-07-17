@@ -4,6 +4,9 @@ import open3d as o3d
 
 
 axes = {
+    'x': np.array([1, 0, 0]),
+    'y': np.array([0, 1, 0]),
+    'z': np.array([0, 0, 1]),
     'xy': np.array([1, -1, 0]) / np.sqrt(2),
     '-xy':np.array([1, 1, 0]) / np.sqrt(2)
 
@@ -20,13 +23,14 @@ def load_obj(path):
 # so all objects will require same threshold
 def normalize(obj):
     mesh = copy.deepcopy(obj)
+    center = mesh.get_axis_aligned_bounding_box().get_center()
     vertices = np.asarray(mesh.vertices)
-    center = np.mean(vertices, axis = 0)
     vertices -= center
-    scale = np.linalg.norm(np.max(vertices, axis=0) - np.min(vertices, axis =0))
+    scale = np.linalg.norm(np.max(vertices, axis=0) - np.min(vertices, axis=0))
     vertices /= scale
     mesh.vertices = o3d.utility.Vector3dVector(vertices)
     return mesh
+
 
 # how well they alligned
 def compute_min_dist(n_obj, mirrored):
@@ -70,13 +74,26 @@ def get_rotation_matrix(T):
     T[:3, :3] = R
     return T
 
+def get_reflection_matrix(normal: np.ndarray) -> np.ndarray:
+    n = normal / np.linalg.norm(normal)
+    R = np.eye(3) - 2 * np.outer(n, n)
+    T = np.eye(4)
+    T[:3, :3] = R
+    return T
+
 # symmetry checker
-def check_symmetry(obj, threshold=0.01, visualize=False):
+def check_symmetry(obj, threshold=0.05, visualize=True):
+    temp_best = 100
+
     n_obj = normalize(obj)
     center = n_obj.get_center()
+
     for name, T in axes.items():
         mirrored = copy.deepcopy(n_obj)
-        T_n = get_rotation_matrix(T)
+        try: 
+            T_n = get_rotation_matrix(T)
+        except Exception as e:
+            T_n = get_reflection_matrix(T)
         mirrored.transform(T_n)
 
         mean_distance = compute_min_dist(n_obj, mirrored)
@@ -90,19 +107,24 @@ def check_symmetry(obj, threshold=0.01, visualize=False):
             sym_line = create_symmetry_line(center, T, length=3.0)
             original_vis.paint_uniform_color([0.6, 0.2, 0.2])
             mirrored_vis.paint_uniform_color([0.1, 0.1, 0.6])
-            mirrored_vis.translate((0.0001, 0.0001, 0.0001))
+            # mirrored_vis.translate((0.00015, 0.00015, 0.0001))
 
             coord = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3)
-            coord.translate([0.5, 0.0, 0])
+            coord.translate([0.0, 0.0, 0.5])
             o3d.visualization.draw_geometries([original_vis, mirrored_vis,sym_line, coord])
             print(f"axes:{name}, threshold: {mean_distance}")
-        if mean_distance < threshold:
-            return True, mean_distance, name, T
-    return False, 9000, None, None
+            if mean_distance < temp_best:
+                temp_best = mean_distance
+    if temp_best < threshold:
+        return True, mean_distance, name, T_n  
+    else:
+        return False, 100, None, None
 
 
 if __name__== '__main__':
-    obj_mesh = load_obj('obj_files/467499.obj')
-
+    # obj_mesh = load_obj('obj_files/1663540.obj')
+    obj_mesh = load_obj('obj_files/534931387.obj')
+    # obj_mesh = load_obj('obj_files/467499.obj')
+    
     status, dist, axis, transformation = check_symmetry(obj_mesh)
-    print(f"::Status: {status}, Axis: {axis}, Mean dist :{dist}\n Transformation: \n{transformation}")
+    print(f"::Status: {status}, Axis: {axis}, Mean dist: {dist}\n Transformation: \n{transformation}")
